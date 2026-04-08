@@ -1,0 +1,255 @@
+#!/bin/bash
+
+# Main entry point for ADB Manager Unified Project
+# Source libraries
+LIB_PATH="$(dirname "$(readlink -f "$0")")/../lib/adb_core.sh"
+if [ -f "$LIB_PATH" ]; then
+    source "$LIB_PATH"
+else
+    echo "Error: Core library not found at $LIB_PATH"
+    exit 1
+fi
+
+TEMP_FILE=$(mktemp)
+
+# --- Submenus ---
+
+show_connection_menu() {
+    while true; do
+        LAST_CONN=$(get_last_conn)
+        MENU_OPTIONS=(
+            1 "Auto Connect (Last used or Scan)"
+            2 "Pair Device (First time)"
+            3 "Connect to Device (Manual)"
+            4 "Open Developer Options"
+        )
+        [ -n "$LAST_CONN" ] && MENU_OPTIONS+=(5 "Clear Last Connection ($LAST_CONN)")
+        MENU_OPTIONS+=(0 "Back to Main Menu")
+
+        ACTION=$(dialog --title "Connection Management" --menu "Choose an action:" 15 60 6 "${MENU_OPTIONS[@]}" 2>&1 >/dev/tty)
+
+        case "$ACTION" in
+            1)
+                if auto_connect; then
+                    dialog --title "Success" --msgbox "Connected successfully!" 6 40
+                else
+                    dialog --title "Failed" --msgbox "Could not connect automatically." 8 50
+                fi
+                ;;
+            2)
+                PAIR_INFO=$(dialog --title "Pairing Info" --inputbox "Enter IP:Port for pairing:" 8 60 "localhost:" 2>&1 >/dev/tty)
+                if [ -n "$PAIR_INFO" ]; then
+                    PAIR_CODE=$(dialog --title "Pairing Code" --inputbox "Enter the 6-digit pairing code:" 8 60 2>&1 >/dev/tty)
+                    if [ -n "$PAIR_CODE" ]; then
+                        dialog --infobox "Pairing with $PAIR_INFO..." 3 40
+                        RESULT=$(adb pair "$PAIR_INFO" "$PAIR_CODE" 2>&1)
+                        dialog --title "Pairing Result" --msgbox "$RESULT" 10 60
+                    fi
+                fi
+                ;;
+            3)
+                DEFAULT_VAL="localhost:5555"
+                [ -n "$LAST_CONN" ] && DEFAULT_VAL="$LAST_CONN"
+                CONNECT_INFO=$(dialog --title "Connection Info" --inputbox "Enter IP:Port for connection:" 8 60 "$DEFAULT_VAL" 2>&1 >/dev/tty)
+                if [ -n "$CONNECT_INFO" ]; then
+                    dialog --infobox "Connecting to $CONNECT_INFO..." 3 40
+                    RESULT=$(adb connect "$CONNECT_INFO" 2>&1)
+                    [ $? -eq 0 ] && save_conn "$CONNECT_INFO"
+                    dialog --title "Connect Result" --msgbox "$RESULT" 10 60
+                fi
+                ;;
+            4)
+                open_developer_options || dialog --title "Info" --msgbox "Failed to open settings. Please go to:\nSettings > System > Developer Options" 10 50
+                ;;
+            5)
+                clear_last_conn
+                dialog --title "Success" --msgbox "Last connection info cleared." 6 40
+                ;;
+            0 | "") break ;;
+        esac
+    done
+}
+
+show_interactive_menu() {
+    while true; do
+        INTERACT_CHOICE=$(dialog --title "Interactive Control" --menu "Choose an action:" 20 60 12 \
+            1 "Send Text" \
+            2 "Press Home" \
+            3 "Press Back" \
+            4 "Press Recents" \
+            5 "Press Power" \
+            6 "Volume Up" \
+            7 "Volume Down" \
+            8 "Tap Screen (X Y)" \
+            9 "Swipe (X1 Y1 X2 Y2)" \
+            10 "Media Controls" \
+            11 "Navigation Keys" \
+            12 "Brightness Control" \
+            0 "Back" 2>&1 >/dev/tty)
+        
+        case "$INTERACT_CHOICE" in
+            1)
+                TEXT=$(dialog --title "Send Text" --inputbox "Enter text to send:" 8 50 2>&1 >/dev/tty)
+                if [ -n "$TEXT" ]; then
+                    TEXT_ESC=$(echo "$TEXT" | sed 's/ /%s/g')
+                    adb shell input text "$TEXT_ESC"
+                fi
+                ;;
+            2) adb shell input keyevent 3 ;;
+            3) adb shell input keyevent 4 ;;
+            4) adb shell input keyevent 187 ;;
+            5) adb shell input keyevent 26 ;;
+            6) adb shell input keyevent 24 ;;
+            7) adb shell input keyevent 25 ;;
+            8)
+                COORDS=$(dialog --title "Tap Screen" --inputbox "Enter X Y coordinates:" 8 50 2>&1 >/dev/tty)
+                [ -n "$COORDS" ] && adb shell input tap $COORDS
+                ;;
+            9)
+                SWIPE=$(dialog --title "Swipe Screen" --inputbox "Enter X1 Y1 X2 Y2:" 8 50 2>&1 >/dev/tty)
+                [ -n "$SWIPE" ] && adb shell input swipe $SWIPE
+                ;;
+            10)
+                MEDIA_CHOICE=$(dialog --title "Media Controls" --menu "Choose:" 12 40 4 1 "Play/Pause" 2 "Next" 3 "Prev" 0 "Back" 2>&1 >/dev/tty)
+                case "$MEDIA_CHOICE" in
+                    1) adb shell input keyevent 85 ;;
+                    2) adb shell input keyevent 87 ;;
+                    3) adb shell input keyevent 88 ;;
+                esac
+                ;;
+            11)
+                NAV_CHOICE=$(dialog --title "Navigation" --menu "Choose:" 15 40 7 1 "Up" 2 "Down" 3 "Left" 4 "Right" 5 "Enter" 6 "Tab" 0 "Back" 2>&1 >/dev/tty)
+                case "$NAV_CHOICE" in
+                    1) adb shell input keyevent 19 ;;
+                    2) adb shell input keyevent 20 ;;
+                    3) adb shell input keyevent 21 ;;
+                    4) adb shell input keyevent 22 ;;
+                    5) adb shell input keyevent 66 ;;
+                    6) adb shell input keyevent 61 ;;
+                esac
+                ;;
+            12)
+                BRIGHTNESS=$(dialog --title "Brightness" --inputbox "Value (0-255):" 8 40 2>&1 >/dev/tty)
+                [ -n "$BRIGHTNESS" ] && adb shell settings put system screen_brightness "$BRIGHTNESS"
+                ;;
+            0 | "") break ;;
+        esac
+    done
+}
+
+# --- Main Loop ---
+
+while true; do
+    dialog --clear --title "📱 ADB Unified Manager" \
+        --menu "Main Menu:" 20 50 12 \
+        1 "Connection Management" \
+        2 "List Devices" \
+        3 "Device Info" \
+        4 "App Management" \
+        5 "File Operations" \
+        6 "Interactive Control" \
+        7 "System Tools (Logcat/Top/Reboot)" \
+        8 "Take Screenshot/Record" \
+        9 "ADB Shell" \
+        0 "Exit" 2> "$TEMP_FILE"
+
+    CHOICE=$(cat "$TEMP_FILE")
+
+    case "$CHOICE" in
+        1) show_connection_menu ;;
+        2)
+            DEVICES=$(adb devices)
+            dialog --title "Connected Devices" --msgbox "$DEVICES" 15 60
+            ;;
+        3)
+            INFO=$(get_device_info)
+            dialog --title "Device Info" --msgbox "$INFO" 10 50
+            ;;
+        4)
+            while true; do
+                APP_CHOICE=$(dialog --title "App Management" --menu "Choose:" 15 50 6 \
+                    1 "List Installed Apps" \
+                    2 "Install APK" \
+                    3 "Uninstall App" \
+                    4 "Start App" \
+                    5 "Stop App" \
+                    6 "Clear App Data" \
+                    0 "Back" 2>&1 >/dev/tty)
+                case "$APP_CHOICE" in
+                    1) adb shell pm list packages > "$TEMP_FILE"; dialog --title "Packages" --textbox "$TEMP_FILE" 20 60 ;;
+                    2) 
+                        APK_PATH=$(dialog --title "Install" --inputbox "Path to APK:" 8 50 2>&1 >/dev/tty)
+                        [ -f "$APK_PATH" ] && (RESULT=$(adb install "$APK_PATH" 2>&1); dialog --msgbox "$RESULT" 10 60)
+                        ;;
+                    3)
+                        PKG=$(select_package "Uninstall" "Select package:")
+                        [ -n "$PKG" ] && (adb uninstall "$PKG"; dialog --msgbox "Uninstalled $PKG" 6 40)
+                        ;;
+                    4) PKG=$(select_package "Start" "Select package:"); [ -n "$PKG" ] && adb shell monkey -p "$PKG" 1 ;;
+                    5) PKG=$(select_package "Stop" "Select package:"); [ -n "$PKG" ] && adb shell am force-stop "$PKG" ;;
+                    6) PKG=$(select_package "Clear" "Select package:"); [ -n "$PKG" ] && adb shell pm clear "$PKG" ;;
+                    0 | "") break ;;
+                esac
+            done
+            ;;
+        5)
+            while true; do
+                FILE_CHOICE=$(dialog --title "File Operations" --menu "Choose:" 12 50 3 1 "Push File" 2 "Pull File" 0 "Back" 2>&1 >/dev/tty)
+                case "$FILE_CHOICE" in
+                    1)
+                        SRC=$(dialog --inputbox "Source (Termux):" 8 60 2>&1 >/dev/tty)
+                        DST=$(dialog --inputbox "Dest (Device):" 8 60 "/sdcard/" 2>&1 >/dev/tty)
+                        [ -n "$SRC" ] && adb push "$SRC" "$DST"
+                        ;;
+                    2)
+                        SRC=$(dialog --inputbox "Source (Device):" 8 60 "/sdcard/" 2>&1 >/dev/tty)
+                        DST=$(dialog --inputbox "Dest (Termux):" 8 60 "." 2>&1 >/dev/tty)
+                        [ -n "$SRC" ] && adb pull "$SRC" "$DST"
+                        ;;
+                    0 | "") break ;;
+                esac
+            done
+            ;;
+        6) show_interactive_menu ;;
+        7)
+            while true; do
+                SYS_CHOICE=$(dialog --title "System Tools" --menu "Choose:" 15 50 4 1 "Logcat (100 lines)" 2 "Top Processes" 3 "Reboot" 4 "Storage/CPU Info" 0 "Back" 2>&1 >/dev/tty)
+                case "$SYS_CHOICE" in
+                    1) adb logcat -d -t 100 > "$TEMP_FILE"; dialog --textbox "$TEMP_FILE" 20 70 ;;
+                    2) adb shell top -n 1 -b > "$TEMP_FILE"; dialog --textbox "$TEMP_FILE" 20 70 ;;
+                    3) dialog --yesno "Reboot?" 6 30 && adb reboot ;;
+                    4)
+                        STORAGE=$(adb shell df -h /data /sdcard)
+                        CPU=$(adb shell getprop ro.product.cpu.abi)
+                        dialog --msgbox "Storage:\n$STORAGE\n\nCPU: $CPU" 20 70
+                        ;;
+                    0 | "") break ;;
+                esac
+            done
+            ;;
+        8)
+            while true; do
+                MED_CHOICE=$(dialog --title "Media" --menu "Choose:" 12 50 3 1 "Screenshot" 2 "Record (10s)" 0 "Back" 2>&1 >/dev/tty)
+                case "$MED_CHOICE" in
+                    1)
+                        FILE="screenshot_$(date +%s).png"
+                        adb shell screencap -p /sdcard/"$FILE" && adb pull /sdcard/"$FILE" . && adb shell rm /sdcard/"$FILE"
+                        dialog --msgbox "Saved as $FILE" 6 40
+                        ;;
+                    2)
+                        FILE="record_$(date +%s).mp4"
+                        dialog --infobox "Recording..." 3 30; adb shell screenrecord --time-limit 10 /sdcard/"$FILE" && adb pull /sdcard/"$FILE" . && adb shell rm /sdcard/"$FILE"
+                        dialog --msgbox "Saved as $FILE" 6 40
+                        ;;
+                    0 | "") break ;;
+                esac
+            done
+            ;;
+        9) clear; echo "ADB Shell (exit to return)"; adb shell ;;
+        0 | "") break ;;
+    esac
+done
+
+rm "$TEMP_FILE"
+clear
+echo "👋 ADB Unified Manager Closed."
