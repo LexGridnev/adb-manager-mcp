@@ -21,7 +21,7 @@ This system allows you to control your Android device (or the device Termux is r
 The project is organized for reliability and ease of use:
 - `adb-manager/bin/`: Contains the main executable `adb-manager`.
 - `adb-manager/lib/`: Contains the core logic library `adb_core.sh`.
-- `adb-manager/tests/`: Contains automated unit tests.
+- `adb-manager/tests/`: Contains automated unit tests and system checks.
 - `adb-manager/mcp/`: Contains the MCP server implementation (`server.py`).
 - `adb-manager/ADB_USER_MANUAL.md`: This manual.
 
@@ -33,8 +33,17 @@ The MCP server exposes several tools:
 - `adb_connect`: Connect to a device.
 - `adb_devices`: List connected devices.
 - `adb_shell`: Execute shell commands.
-- `adb_list_packages`: List installed apps.
+- `adb_list_packages`: List all installed apps.
+- `adb_list_apps`: List apps with filtering (user, system, enabled, disabled).
+- `adb_app_info`: Get version and install info for a specific package.
 - `adb_device_info`: Retrieve model, OS, and battery data.
+- `adb_screenshot`: Take a screenshot and save it to Termux.
+- `adb_keyevent`: Send a key event (e.g., Home, Back) to the device.
+- `adb_push`: Push a file from Termux to the device.
+- `adb_pull`: Pull a file from the device to Termux.
+- `adb_pair`: Pair with a device using a 6-digit code.
+- `adb_install`: Install an APK file from Termux to the device.
+- `adb_auto_connect`: Automatically scan and connect to local Wireless Debugging.
 
 ### Running the MCP Server
 The server runs over standard I/O (stdio). You can start it using:
@@ -130,14 +139,37 @@ Under the "Connection Management" menu, you can:
 
 ## 7. Development & Testing
 Automated tests ensure the core logic remains functional.
-To run the tests:
+
+### Running Bash Core Tests
+These tests verify the core library logic (`adb_core.sh`) using `shunit2`.
 ```bash
 bash ~/adb-manager/tests/test_core.sh
 ```
 
+### Running MCP Server Tests
+These tests verify the MCP server implementation (`server.py`) using Python's `unittest`.
+```bash
+python3 ~/adb-manager/tests/test_server.py
+```
+
+### Running System Check
+Verifies environment readiness (dependencies, permissions).
+```bash
+bash ~/adb-manager/tests/system_check.sh
+```
+
 ---
 
-## 8. Troubleshooting
+## 8. Testing Roadmap
+Future testing phases include:
+1. **Robustness Testing (Phase 2)**: Expand mocks to cover more Android-specific edge cases (e.g., unauthorized devices, full disk). [Partially Implemented]
+2. **Integration Testing (Phase 3)**: Use a mock ADB binary to verify script behavior without a real device but with realistic multi-step interactions.
+3. **E2E Manual Checklist**: Standardized verification for UI transitions in the `dialog` menus.
+4. **Security Audit**: Ensure input sanitization for all shell-executed commands.
+
+---
+
+## 9. Troubleshooting
 
 **"Device not found" or "Offline"**
 - Ensure **Wireless Debugging** is still ON in Developer Options.

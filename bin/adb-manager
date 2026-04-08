@@ -21,12 +21,14 @@ show_connection_menu() {
             1 "Auto Connect (Last used or Scan)"
             2 "Pair Device (First time)"
             3 "Connect to Device (Manual)"
-            4 "Open Developer Options"
+            4 "Open Wireless Debugging Settings"
+            5 "Open Developer Options"
+            6 "Enable Wireless ADB (Root Required)"
         )
-        [ -n "$LAST_CONN" ] && MENU_OPTIONS+=(5 "Clear Last Connection ($LAST_CONN)")
+        [ -n "$LAST_CONN" ] && MENU_OPTIONS+=(7 "Clear Last Connection ($LAST_CONN)")
         MENU_OPTIONS+=(0 "Back to Main Menu")
 
-        ACTION=$(dialog --title "Connection Management" --menu "Choose an action:" 15 60 6 "${MENU_OPTIONS[@]}" 2>&1 >/dev/tty)
+        ACTION=$(dialog --title "Connection Management" --menu "Choose an action:" 18 60 8 "${MENU_OPTIONS[@]}" 2>&1 >/dev/tty)
 
         case "$ACTION" in
             1)
@@ -59,9 +61,23 @@ show_connection_menu() {
                 fi
                 ;;
             4)
-                open_developer_options || dialog --title "Info" --msgbox "Failed to open settings. Please go to:\nSettings > System > Developer Options" 10 50
+                open_wireless_debug_settings || dialog --title "Info" --msgbox "Failed to open Wireless Debugging settings." 10 50
                 ;;
             5)
+                open_developer_options || dialog --title "Info" --msgbox "Failed to open settings. Please go to:\nSettings > System > Developer Options" 10 50
+                ;;
+            6)
+                PORT=$(dialog --title "Wireless ADB (Root)" --inputbox "Enter port to use (default 5555):" 8 50 "5555" 2>&1 >/dev/tty)
+                if [ -n "$PORT" ]; then
+                    dialog --infobox "Attempting to enable wireless ADB via su..." 3 50
+                    if enable_adb_wireless_root "$PORT"; then
+                        dialog --title "Success" --msgbox "Wireless ADB enabled on port $PORT.\nYou may now try to Connect to localhost:$PORT" 10 50
+                    else
+                        dialog --title "Failed" --msgbox "Failed to enable Wireless ADB. Ensure your device is rooted and 'su' is available in Termux." 10 50
+                    fi
+                fi
+                ;;
+            7)
                 clear_last_conn
                 dialog --title "Success" --msgbox "Last connection info cleared." 6 40
                 ;;
@@ -91,7 +107,10 @@ show_interactive_menu() {
             1)
                 TEXT=$(dialog --title "Send Text" --inputbox "Enter text to send:" 8 50 2>&1 >/dev/tty)
                 if [ -n "$TEXT" ]; then
+                    # Replace spaces with %s for input text command
                     TEXT_ESC=$(echo "$TEXT" | sed 's/ /%s/g')
+                    # Escape other special characters that might be interpreted by shell
+                    TEXT_ESC=$(echo "$TEXT_ESC" | sed 's/([\(\)\<\>\|\&\;\*\"\x27\\])/\\\1/g')
                     adb shell input text "$TEXT_ESC"
                 fi
                 ;;

@@ -2,6 +2,7 @@ import json
 import sys
 import subprocess
 import os
+import time
 
 # Base directory for adb-manager
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -36,6 +37,39 @@ def call_tool(name, arguments):
         res = run_adb_command(["shell", "pm", "list", "packages"])
         return [{"type": "text", "text": res.get("stdout", "") or "No packages found."}]
 
+    elif name == "adb_list_apps":
+        filter_type = arguments.get("filter", "all")
+        cmd = ["shell", "pm", "list", "packages"]
+        if filter_type == "user":
+            cmd.append("-3")
+        elif filter_type == "system":
+            cmd.append("-s")
+        elif filter_type == "enabled":
+            cmd.append("-e")
+        elif filter_type == "disabled":
+            cmd.append("-d")
+        
+        res = run_adb_command(cmd)
+        return [{"type": "text", "text": res.get("stdout", "") or f"No {filter_type} packages found."}]
+
+    elif name == "adb_app_info":
+        package = arguments.get("package")
+        res = run_adb_command(["shell", "dumpsys", "package", package])
+        # This output is huge, let's extract some key parts
+        stdout = res.get("stdout", "")
+        summary = []
+        for line in stdout.splitlines():
+            line = line.strip()
+            if line.startswith("versionName="):
+                summary.append(line)
+            elif line.startswith("firstInstallTime="):
+                summary.append(line)
+            elif line.startswith("lastUpdateTime="):
+                summary.append(line)
+            elif "userId=" in line:
+                summary.append(line)
+        return [{"type": "text", "text": "\n".join(summary) or "Package not found or no info available."}]
+
     elif name == "adb_device_info":
         model = run_adb_command(["shell", "getprop", "ro.product.model"]).get("stdout", "").strip()
         version = run_adb_command(["shell", "getprop", "ro.build.version.release"]).get("stdout", "").strip()
@@ -45,6 +79,55 @@ def call_tool(name, arguments):
             if "level:" in line:
                 level = line.split(":")[1].strip()
         return [{"type": "text", "text": f"Model: {model}\nAndroid Version: {version}\nBattery: {level}%"}]
+
+    elif name == "adb_screenshot":
+        filename = arguments.get("filename", f"screenshot_{int(time.time())}.png")
+        remote_path = f"/sdcard/{filename}"
+        run_adb_command(["shell", "screencap", "-p", remote_path])
+        res = run_adb_command(["pull", remote_path, filename])
+        run_adb_command(["shell", "rm", remote_path])
+        if res.get("exit_code") == 0:
+            return [{"type": "text", "text": f"Screenshot saved to {filename}"}]
+        else:
+            return [{"type": "text", "text": f"Failed to pull screenshot: {res.get('stderr')}"}]
+
+    elif name == "adb_keyevent":
+        keycode = arguments.get("keycode")
+        res = run_adb_command(["shell", "input", "keyevent", str(keycode)])
+        return [{"type": "text", "text": f"Sent keyevent {keycode}. STDOUT: {res.get('stdout')}"}]
+
+    elif name == "adb_push":
+        local_path = arguments.get("local_path")
+        remote_path = arguments.get("remote_path", "/sdcard/")
+        res = run_adb_command(["push", local_path, remote_path])
+        return [{"type": "text", "text": f"STDOUT: {res.get('stdout')}\nSTDERR: {res.get('stderr')}"}]
+
+    elif name == "adb_pull":
+        remote_path = arguments.get("remote_path")
+        local_path = arguments.get("local_path", ".")
+        res = run_adb_command(["pull", remote_path, local_path])
+        return [{"type": "text", "text": f"STDOUT: {res.get('stdout')}\nSTDERR: {res.get('stderr')}"}]
+
+    elif name == "adb_pair":
+        target = arguments.get("target")
+        code = arguments.get("code")
+        res = run_adb_command(["pair", target, code])
+        return [{"type": "text", "text": f"STDOUT: {res.get('stdout')}\nSTDERR: {res.get('stderr')}"}]
+
+    elif name == "adb_install":
+        local_path = arguments.get("local_path")
+        res = run_adb_command(["install", local_path])
+        return [{"type": "text", "text": f"STDOUT: {res.get('stdout')}\nSTDERR: {res.get('stderr')}"}]
+
+    elif name == "adb_auto_connect":
+        # Call the bash auto_connect function via a subshell
+        cmd = f"source {BASE_DIR}/lib/adb_core.sh && auto_connect"
+        # We need to mock dialog for the script to run without a TTY
+        res = subprocess.run(["bash", "-c", f"dialog() {{ return 0; }}; export -f dialog; {cmd}"], capture_output=True, text=True)
+        if res.returncode == 0:
+            return [{"type": "text", "text": "Successfully auto-connected to the device."}]
+        else:
+            return [{"type": "text", "text": f"Auto-connect failed. Ensure Wireless Debugging is enabled.\nSTDOUT: {res.stdout}\nSTDERR: {res.stderr}"}]
 
     return [{"type": "text", "text": f"Unknown tool: {name}"}]
 
@@ -109,12 +192,106 @@ def main():
                             },
                             {
                                 "name": "adb_list_packages",
-                                "description": "List installed packages on the device",
+                                "description": "List all installed packages on the device",
                                 "inputSchema": {"type": "object", "properties": {}}
+                            },
+                            {
+                                "name": "adb_list_apps",
+                                "description": "List installed apps with filtering",
+                                "inputSchema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "filter": {"type": "string", "enum": ["all", "user", "system", "enabled", "disabled"], "description": "Filter type (default: all)"}
+                                    }
+                                }
+                            },
+                            {
+                                "name": "adb_app_info",
+                                "description": "Get detailed info about a specific package",
+                                "inputSchema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "package": {"type": "string", "description": "Package name (e.g., com.android.chrome)"}
+                                    },
+                                    "required": ["package"]
+                                }
                             },
                             {
                                 "name": "adb_device_info",
                                 "description": "Get detailed device information (Model, OS, Battery)",
+                                "inputSchema": {"type": "object", "properties": {}}
+                            },
+                            {
+                                "name": "adb_screenshot",
+                                "description": "Take a screenshot and save it to Termux",
+                                "inputSchema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "filename": {"type": "string", "description": "Optional filename (default: screenshot_TIMESTAMP.png)"}
+                                    }
+                                }
+                            },
+                            {
+                                "name": "adb_keyevent",
+                                "description": "Send a key event to the device",
+                                "inputSchema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "keycode": {"type": "integer", "description": "Android keycode (e.g., 3 for Home, 4 for Back)"}
+                                    },
+                                    "required": ["keycode"]
+                                }
+                            },
+                            {
+                                "name": "adb_push",
+                                "description": "Push a file from Termux to the device",
+                                "inputSchema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "local_path": {"type": "string", "description": "Local file path in Termux"},
+                                        "remote_path": {"type": "string", "description": "Remote path on device (default: /sdcard/)"}
+                                    },
+                                    "required": ["local_path"]
+                                }
+                            },
+                            {
+                                "name": "adb_pull",
+                                "description": "Pull a file from the device to Termux",
+                                "inputSchema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "remote_path": {"type": "string", "description": "Remote file path on device"},
+                                        "local_path": {"type": "string", "description": "Local destination path in Termux (default: .)"}
+                                    },
+                                    "required": ["remote_path"]
+                                }
+                            },
+                            {
+                                "name": "adb_pair",
+                                "description": "Pair with a device using a pairing code",
+                                "inputSchema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "target": {"type": "string", "description": "IP:Port for pairing (e.g., localhost:42351)"},
+                                        "code": {"type": "string", "description": "6-digit pairing code"}
+                                    },
+                                    "required": ["target", "code"]
+                                }
+                            },
+                            {
+                                "name": "adb_install",
+                                "description": "Install an APK file on the device",
+                                "inputSchema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "local_path": {"type": "string", "description": "Local path to APK in Termux"}
+                                    },
+                                    "required": ["local_path"]
+                                }
+                            },
+                            {
+                                "name": "adb_auto_connect",
+                                "description": "Automatically scan and connect to local ADB Wireless Debugging port",
                                 "inputSchema": {"type": "object", "properties": {}}
                             }
                         ]

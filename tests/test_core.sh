@@ -21,9 +21,16 @@ adb() {
             ;;
         shell)
             if [[ "$2" == "getprop" ]]; then
-                echo "MockModel"
+                if [[ "$3" == "ro.product.model" ]]; then
+                    echo "MockModel"
+                elif [[ "$3" == "ro.build.version.release" ]]; then
+                    echo "13"
+                fi
             elif [[ "$2" == "pm" ]]; then
-                echo "package:com.mock.app"
+                echo "package:com.mock.app1"
+                echo "package:com.mock.app2"
+            elif [[ "$2" == "dumpsys" ]]; then
+                echo "  level: 100"
             fi
             return 0
             ;;
@@ -52,9 +59,17 @@ testAutoConnectSuccess() {
     assertTrue "Should return 0 on success" $?
 }
 
+testGetDeviceInfo() {
+    local info=$(get_device_info)
+    # Based on mocks: model is MockModel, battery level is 100
+    assertTrue "Info should contain model" "[[ \"$info\" == *\"MockModel\"* ]]"
+    assertTrue "Info should contain battery" "[[ \"$info\" == *\"100%\"* ]]"
+}
+
 testGetPackageList() {
     local list=$(get_package_list)
-    assertEquals "com.mock.app" "$list"
+    local expected=$(echo -e "com.mock.app1\ncom.mock.app2")
+    assertEquals "$expected" "$list"
 }
 
 # Run tests
