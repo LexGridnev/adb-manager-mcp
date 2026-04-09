@@ -102,11 +102,10 @@ def call_tool(name, arguments):
         res = run_adb_command(["push", local_path, remote_path])
         return [{"type": "text", "text": f"STDOUT: {res.get('stdout')}\nSTDERR: {res.get('stderr')}"}]
 
-    elif name == "adb_pull":
-        remote_path = arguments.get("remote_path")
-        local_path = arguments.get("local_path", ".")
-        res = run_adb_command(["pull", remote_path, local_path])
-        return [{"type": "text", "text": f"STDOUT: {res.get('stdout')}\nSTDERR: {res.get('stderr')}"}]
+    elif name == "adb_keyevent":
+        keycode = arguments.get("keycode")
+        res = run_adb_command(["shell", "input", "keyevent", str(keycode)])
+        return [{"type": "text", "text": f"Sent keyevent {keycode}. STDOUT: {res.get('stdout')}"}]
 
     elif name == "adb_pair":
         target = arguments.get("target")
@@ -128,6 +127,57 @@ def call_tool(name, arguments):
             return [{"type": "text", "text": "Successfully auto-connected to the device."}]
         else:
             return [{"type": "text", "text": f"Auto-connect failed. Ensure Wireless Debugging is enabled.\nSTDOUT: {res.stdout}\nSTDERR: {res.stderr}"}]
+
+    elif name == "adb_full_auto_setup":
+        # This will attempt auto_connect and then root-based setup if possible.
+        # Manual pairing is NOT supported via MCP as it requires interactive TTY for dialog.
+        cmd = f"source {BASE_DIR}/lib/adb_core.sh && (auto_connect || (command -v su >/dev/null && enable_adb_wireless_root 5555 && sleep 1 && adb connect localhost:5555))"
+        res = subprocess.run(["bash", "-c", f"dialog() {{ return 0; }}; export -f dialog; {cmd}"], capture_output=True, text=True)
+        if res.returncode == 0:
+            return [{"type": "text", "text": "Automatic setup successful. Device connected."}]
+        else:
+            return [{"type": "text", "text": "Automatic setup failed (tried auto-connect and root method)."}]
+
+    elif name == "adb_setup_self_connection":
+        # This tool attempts the self-connection hack.
+        # Since it requires manual pairing, we can't fully automate it here,
+        # but we can provide the instructions and port scanning.
+        return [{"type": "text", "text": "The 'Self-Connect Hack' requires interactive pairing. Please run the adb-manager TUI directly to use this feature."}]
+
+    elif name == "adb_open_wireless_settings":
+        res = subprocess.run(["bash", "-c", f"source {BASE_DIR}/lib/adb_core.sh && open_wireless_debug_settings"], capture_output=True, text=True)
+        if res.returncode == 0:
+            return [{"type": "text", "text": "Successfully opened Wireless Debugging settings."}]
+        else:
+            return [{"type": "text", "text": "Failed to open settings."}]
+
+    elif name == "adb_open_hotspot_settings":
+        res = subprocess.run(["bash", "-c", f"source {BASE_DIR}/lib/adb_core.sh && open_hotspot_settings"], capture_output=True, text=True)
+        if res.returncode == 0:
+            return [{"type": "text", "text": "Successfully opened Hotspot settings."}]
+        else:
+            return [{"type": "text", "text": "Failed to open settings."}]
+
+    elif name == "adb_open_wifi_direct_settings":
+        res = subprocess.run(["bash", "-c", f"source {BASE_DIR}/lib/adb_core.sh && open_wifi_direct_settings"], capture_output=True, text=True)
+        if res.returncode == 0:
+            return [{"type": "text", "text": "Successfully opened WiFi Direct settings."}]
+        else:
+            return [{"type": "text", "text": "Failed to open settings."}]
+
+    elif name == "adb_pair_and_connect":
+        target = arguments.get("target")
+        code = arguments.get("code")
+        cmd = f"source {BASE_DIR}/lib/adb_core.sh && pair_and_connect {target} {code}"
+        res = subprocess.run(["bash", "-c", f"dialog() {{ return 0; }}; export -f dialog; {cmd}"], capture_output=True, text=True)
+        return [{"type": "text", "text": f"STDOUT: {res.stdout}\nSTDERR: {res.stderr}"}]
+
+    elif name == "adb_check_wifi_status":
+        res = subprocess.run(["bash", "-c", f"source {BASE_DIR}/lib/adb_core.sh && check_wifi_active"], capture_output=True, text=True)
+        if res.returncode == 0:
+            return [{"type": "text", "text": "WiFi/Hotspot is ACTIVE."}]
+        else:
+            return [{"type": "text", "text": "WiFi/Hotspot is INACTIVE."}]
 
     return [{"type": "text", "text": f"Unknown tool: {name}"}]
 
@@ -292,6 +342,48 @@ def main():
                             {
                                 "name": "adb_auto_connect",
                                 "description": "Automatically scan and connect to local ADB Wireless Debugging port",
+                                "inputSchema": {"type": "object", "properties": {}}
+                            },
+                            {
+                                "name": "adb_full_auto_setup",
+                                "description": "Attempt full automatic setup: reconnect, root-enable, or scan.",
+                                "inputSchema": {"type": "object", "properties": {}}
+                            },
+                            {
+                                "name": "adb_setup_self_connection",
+                                "description": "Instructions for the 'Self-Connect Hack' to get shell access without root.",
+                                "inputSchema": {"type": "object", "properties": {}}
+                            },
+                            {
+                                "name": "adb_open_wireless_settings",
+                                "description": "Open Wireless Debugging settings on the device",
+                                "inputSchema": {"type": "object", "properties": {}}
+                            },
+                            {
+                                "name": "adb_open_hotspot_settings",
+                                "description": "Open Hotspot (Tethering) settings on the device to enable 'Virtual WiFi'",
+                                "inputSchema": {"type": "object", "properties": {}}
+                            },
+                            {
+                                "name": "adb_open_wifi_direct_settings",
+                                "description": "Open WiFi Direct settings to help unlock Wireless Debugging toggle",
+                                "inputSchema": {"type": "object", "properties": {}}
+                            },
+                            {
+                                "name": "adb_pair_and_connect",
+                                "description": "Pair with a device AND automatically scan for the connection port to finish setup.",
+                                "inputSchema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "target": {"type": "string", "description": "IP:Port for pairing (e.g., localhost:42351)"},
+                                        "code": {"type": "string", "description": "6-digit pairing code"}
+                                    },
+                                    "required": ["target", "code"]
+                                }
+                            },
+                            {
+                                "name": "adb_check_wifi_status",
+                                "description": "Check if WiFi or Hotspot is active (returns ACTIVE or INACTIVE)",
                                 "inputSchema": {"type": "object", "properties": {}}
                             }
                         ]

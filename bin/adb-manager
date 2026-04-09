@@ -18,27 +18,51 @@ show_connection_menu() {
     while true; do
         LAST_CONN=$(get_last_conn)
         MENU_OPTIONS=(
-            1 "Auto Connect (Last used or Scan)"
-            2 "Pair Device (First time)"
-            3 "Connect to Device (Manual)"
-            4 "Open Wireless Debugging Settings"
-            5 "Open Developer Options"
-            6 "Enable Wireless ADB (Root Required)"
+            1 "Full Automation (Hotspot/WiFi Trick -> Connect)"
+            2 "Automatic Setup (Connect/Pair)"
+            3 "Self-Connect Hack (No Root)"
+            4 "Auto Connect (Last used or Scan)"
+            5 "Pair Device (Manual)"
+            6 "Connect to Device (Manual)"
+            7 "Open Wireless Debugging Settings"
+            8 "Open Developer Options"
+            9 "Open Hotspot Settings (Virtual WiFi)"
+            10 "Open WiFi Direct Settings (Force Unlock Trick)"
+            11 "Enable Wireless ADB (Root Required)"
         )
-        [ -n "$LAST_CONN" ] && MENU_OPTIONS+=(7 "Clear Last Connection ($LAST_CONN)")
+        [ -n "$LAST_CONN" ] && MENU_OPTIONS+=(12 "Clear Last Connection ($LAST_CONN)")
         MENU_OPTIONS+=(0 "Back to Main Menu")
 
-        ACTION=$(dialog --title "Connection Management" --menu "Choose an action:" 18 60 8 "${MENU_OPTIONS[@]}" 2>&1 >/dev/tty)
+        ACTION=$(dialog --title "Connection Management" --menu "Choose an action:" 18 60 10 "${MENU_OPTIONS[@]}" 2>&1 >/dev/tty)
 
         case "$ACTION" in
             1)
+                if automate_virtual_wifi_setup; then
+                    dialog --title "Success" --msgbox "Wireless ADB is set up and connected!" 6 50
+                fi
+                ;;
+            2)
+                if full_auto_setup; then
+                    dialog --title "Success" --msgbox "Wireless ADB is set up and connected!" 6 50
+                else
+                    dialog --title "Failed" --msgbox "Automatic setup failed.\nPlease try manual connection or check settings." 8 50
+                fi
+                ;;
+            3)
+                if setup_self_connection; then
+                    dialog --title "Success" --msgbox "Wireless ADB Hack active!" 6 40
+                else
+                    dialog --title "Failed" --msgbox "Hack failed. Check settings and try again." 8 50
+                fi
+                ;;
+            4)
                 if auto_connect; then
                     dialog --title "Success" --msgbox "Connected successfully!" 6 40
                 else
                     dialog --title "Failed" --msgbox "Could not connect automatically." 8 50
                 fi
                 ;;
-            2)
+            5)
                 PAIR_INFO=$(dialog --title "Pairing Info" --inputbox "Enter IP:Port for pairing:" 8 60 "localhost:" 2>&1 >/dev/tty)
                 if [ -n "$PAIR_INFO" ]; then
                     PAIR_CODE=$(dialog --title "Pairing Code" --inputbox "Enter the 6-digit pairing code:" 8 60 2>&1 >/dev/tty)
@@ -49,7 +73,7 @@ show_connection_menu() {
                     fi
                 fi
                 ;;
-            3)
+            6)
                 DEFAULT_VAL="localhost:5555"
                 [ -n "$LAST_CONN" ] && DEFAULT_VAL="$LAST_CONN"
                 CONNECT_INFO=$(dialog --title "Connection Info" --inputbox "Enter IP:Port for connection:" 8 60 "$DEFAULT_VAL" 2>&1 >/dev/tty)
@@ -60,13 +84,19 @@ show_connection_menu() {
                     dialog --title "Connect Result" --msgbox "$RESULT" 10 60
                 fi
                 ;;
-            4)
+            7)
                 open_wireless_debug_settings || dialog --title "Info" --msgbox "Failed to open Wireless Debugging settings." 10 50
                 ;;
-            5)
+            8)
                 open_developer_options || dialog --title "Info" --msgbox "Failed to open settings. Please go to:\nSettings > System > Developer Options" 10 50
                 ;;
-            6)
+            9)
+                open_hotspot_settings || dialog --title "Info" --msgbox "Failed to open Hotspot settings." 10 50
+                ;;
+            10)
+                open_wifi_direct_settings || dialog --title "Info" --msgbox "Failed to open WiFi Direct settings." 10 50
+                ;;
+            11)
                 PORT=$(dialog --title "Wireless ADB (Root)" --inputbox "Enter port to use (default 5555):" 8 50 "5555" 2>&1 >/dev/tty)
                 if [ -n "$PORT" ]; then
                     dialog --infobox "Attempting to enable wireless ADB via su..." 3 50
@@ -77,7 +107,7 @@ show_connection_menu() {
                     fi
                 fi
                 ;;
-            7)
+            12)
                 clear_last_conn
                 dialog --title "Success" --msgbox "Last connection info cleared." 6 40
                 ;;
