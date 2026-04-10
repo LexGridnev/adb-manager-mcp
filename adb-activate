@@ -1,0 +1,56 @@
+#!/bin/bash
+
+# Simple entry point for one-click ADB activation
+BASE_DIR="$(cd "$(dirname "$(readlink -f "$0")")"/adb-manager && pwd)"
+BIN_DIR="$BASE_DIR/bin"
+LIB_PATH="$BASE_DIR/lib/adb_core.sh"
+
+if [ ! -f "$LIB_PATH" ]; then
+    echo "Error: ADB Manager core not found."
+    exit 1
+fi
+
+source "$LIB_PATH"
+
+# Function to check if ADB is already working
+is_adb_active() {
+    adb devices | grep -qE "\tdevice$"
+}
+
+if is_adb_active; then
+    echo "✅ ADB is already active and working!"
+    adb devices
+    exit 0
+fi
+
+echo "🚀 Starting One-Click ADB Activation..."
+
+# 1. Try last connection first
+if auto_connect > /dev/null 2>&1; then
+    if is_adb_active; then
+        echo "✅ Reconnected to last device successfully!"
+        exit 0
+    fi
+fi
+
+# 2. Try root if available
+if command -v su > /dev/null 2>&1; then
+    echo "🔒 Root detected, attempting silent activation..."
+    if enable_adb_wireless_root 5555 > /dev/null 2>&1; then
+        sleep 1
+        if adb connect localhost:5555 > /dev/null 2>&1; then
+            if is_adb_active; then
+                echo "✅ ADB activated via root!"
+                exit 0
+            fi
+        fi
+    fi
+fi
+
+# 3. If no active connection and no root, we need to guide the user
+echo "⚠️  Manual pairing required (No Root/Previous connection found)."
+echo "   I will now start the automated pairing flow."
+echo ""
+
+# Launch the TUI directly into the Full Automation flow
+exec "$BASE_DIR/bin/adb-manager" --auto
