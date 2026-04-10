@@ -309,18 +309,14 @@ automate_virtual_wifi_setup() {
     esac
     
     # Once the trick is applied, jump to Wireless Debugging
-    setup_self_connection
-    return $?
-}
-
-open_developer_options() {
-    am start -a android.settings.APPLICATION_DEVELOPMENT_SETTINGS > /dev/null 2>&1
-    return $?
+    open_wireless_debug_settings
 }
 
 open_wireless_debug_settings() {
-    am start -a android.settings.WIFI_ADB_SETTINGS > /dev/null 2>&1 || am start -a android.settings.APPLICATION_DEVELOPMENT_SETTINGS > /dev/null 2>&1
-    return $?
+    am start -a android.settings.WIFI_IP_SETTINGS > /dev/null 2>&1
+    am start -n com.android.settings/.Settings\$DevelopmentSettingsDashboardActivity > /dev/null 2>&1
+    # On some devices, development settings is a sub-activity
+    am start -a android.settings.APPLICATION_DEVELOPMENT_SETTINGS > /dev/null 2>&1
 }
 
 enable_adb_wireless_root() {
