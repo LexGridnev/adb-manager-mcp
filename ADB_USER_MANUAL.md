@@ -1,79 +1,48 @@
-# 📱 Termux ADB Management System - User Manual
+# 📱 Standalone ADB Manager AI App (MCP) - User Manual
 
-Welcome to the **Termux ADB Unified Management System**. This project provides a cohesive and powerful suite of tools to manage ADB (Android Debug Bridge) directly from your Termux environment.
+Welcome to the **Standalone ADB Manager AI App**. This project is a modern, AI-first system designed to allow AI agents to manage Android devices directly from Termux using the Model Context Protocol (MCP).
 
 ## 📑 Table of Contents
 1. [Introduction](#1-introduction)
-2. [Project Structure](#2-project-structure)
-3. [MCP Server (Integration)](#3-mcp-server-integration)
-4. [Prerequisites & Setup](#4-prerequisites--setup)
-5. [Using the Manager](#5-using-the-manager)
-6. [Detailed Feature Guide](#6-detailed-feature-guide)
-7. [Development & Testing](#7-development--testing)
-8. [Troubleshooting](#8-troubleshooting)
+2. [AI-First Architecture](#2-ai-first-architecture)
+3. [MCP Server (Primary Interface)](#3-mcp-server-primary-interface)
+4. [Standalone AI App Launcher](#4-standalone-ai-app-launcher)
+5. [Prerequisites & Setup](#5-prerequisites--setup)
+6. [AI Agent Instructions](#6-ai-agent-instructions)
+7. [Detailed Feature Guide](#7-detailed-feature-guide)
+8. [Development & Testing](#8-development--testing)
+9. [Troubleshooting](#9-troubleshooting)
 
 ---
 
 ## 1. Introduction
-This system allows you to control your Android device (or the device Termux is running on) using ADB without needing a computer. It provides a graphical-like interface (via `dialog`) for common tasks, automating the complex parts of wireless debugging and device management.
+This system transforms your Termux environment into a powerful, AI-controllable ADB station. While it includes a legacy TUI for human use, it is primarily designed to be a "standalone app" powered by an LLM (like Claude) through the MCP server.
 
-## 2. Project Structure
-The project is organized for reliability and ease of use:
-- `adb-manager/bin/`: Contains the main executable `adb-manager`.
-- `adb-manager/lib/`: Contains the core logic library `adb_core.sh`.
-- `adb-manager/tests/`: Contains automated unit tests and system checks.
-- `adb-manager/mcp/`: Contains the MCP server implementation (`server.py`).
-- `adb-manager/ADB_USER_MANUAL.md`: This manual.
+## 2. AI-First Architecture
+The project is organized to prioritize AI interaction:
+- **`adb-manager/start-mcp.sh`**: The main entry point for the standalone app.
+- **`adb-manager/mcp/ai_instructions.md`**: Specialized knowledge base for AI models.
+- **`adb-manager/mcp/server.py`**: The core MCP server handling JSON-RPC requests.
+- **`adb-manager/bin/smart-connect.sh`**: Non-interactive orchestrator for agentic setup.
+- **`adb-manager/lib/adb_core.sh`**: Shared logic library.
 
-## 3. MCP Server (Integration)
-This project includes a built-in **Model Context Protocol (MCP)** server. This allows AI models and other MCP-compatible clients to interact with your device through this management system.
+## 3. MCP Server (Primary Interface)
+The MCP server is the heart of the standalone app. It exposes a rich set of tools to AI agents.
 
-### Features
-The MCP server exposes several tools:
-- `adb_connect`: Connect to a device.
-- `adb_devices`: List connected devices.
-- `adb_shell`: Execute shell commands.
-- `adb_list_packages`: List all installed apps.
-- `adb_list_apps`: List apps with filtering (user, system, enabled, disabled).
-- `adb_app_info`: Get version and install info for a specific package.
-- `adb_device_info`: Retrieve model, OS, and battery data.
-- `adb_screenshot`: Take a screenshot and save it to Termux.
-- `adb_keyevent`: Send a key event (e.g., Home, Back) to the device.
-- `adb_push`: Push a file from Termux to the device.
-- `adb_pull`: Pull a file from the device to Termux.
-- `adb_pair`: Pair with a device using a 6-digit code.
-- `adb_install`: Install an APK file from Termux to the device.
-- `adb_auto_connect`: Automatically scan and connect to local Wireless Debugging.
+### Key Tools
+- `adb_health_check`: Real-time diagnosis of the environment.
+- `adb_smart_orchestrator`: Programmatic setup management.
+- `adb_pair_and_connect`: Automated pairing and discovery.
+- `adb_shell`, `adb_list_apps`, `adb_screenshot`, `adb_device_info`, and more.
 
-### Running the MCP Server
-The server runs over standard I/O (stdio). You can start it using:
+### 4. Standalone AI App Launcher
+You can launch the standalone MCP app using:
 ```bash
-python3 ~/adb-manager/mcp/server.py
+./adb-manager/start-mcp.sh
 ```
+This script ensures the environment is ready and starts the MCP server over stdio.
 
-### Client Configuration
-To connect this server to an MCP client (like Claude Desktop or IDE extensions), use the following configuration:
-
-#### Claude Desktop
-Add this to your `config.json`:
-```json
-{
-  "mcpServers": {
-    "adb-manager": {
-      "command": "python3",
-      "args": ["/data/data/com.termux/files/home/adb-manager/mcp/server.py"]
-    }
-  }
-}
-```
-
-#### Automatic Helper
-You can run the configuration helper to get the exact paths for your system:
-```bash
-~/adb-manager/mcp/config_helper.sh
-```
-
-## 4. Prerequisites & Setup
+## 5. Prerequisites & Setup
 
 ### Enable Wireless Debugging
 To use these tools, you must enable **Wireless Debugging** on your device:
@@ -83,15 +52,18 @@ To use these tools, you must enable **Wireless Debugging** on your device:
 4. Enable **Wireless Debugging**.
    - *Note: You must be connected to Wi-Fi or use a workaround like a portable hotspot.*
 
-### Installation & Run
-The main script is located in `~/adb-manager/bin/adb-manager`.
-Make it executable (if not already):
+### ⚡ One-Click Activation
+The fastest way to get ADB working is using the new activation script:
 ```bash
-chmod +x ~/adb-manager/bin/adb-manager
+./adb-activate
 ```
-Run it:
+This script will automatically detect the best way to connect (Previous connection -> Root -> Guided Automation).
+
+### 📱 Legacy TUI Manager
+The main script is located in `~/adb-manager/bin/adb-manager`.
+Run it via the launcher:
 ```bash
-~/adb-manager/bin/adb-manager
+./adb-manager-launcher
 ```
 
 ---
@@ -166,6 +138,12 @@ Future testing phases include:
 2. **Integration Testing (Phase 3)**: Use a mock ADB binary to verify script behavior without a real device but with realistic multi-step interactions.
 3. **E2E Manual Checklist**: Standardized verification for UI transitions in the `dialog` menus.
 4. **Security Audit**: Ensure input sanitization for all shell-executed commands.
+
+### 8.3 Smart Agent Automation (Experimental)
+If you are using an AI agent with the MCP server, it can now guide you through the setup:
+1. The agent will check your WiFi/Hotspot status.
+2. It can open the necessary settings for you.
+3. Once you provide the pairing code and IP:Port from the "Wireless Debugging" screen, the agent will handle the pairing and connection automatically using the `adb_smart_orchestrator` tool.
 
 ---
 
