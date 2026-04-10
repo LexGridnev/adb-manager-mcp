@@ -1,46 +1,49 @@
-# 📱 Termux ADB Manager MCP
+# 📱 Standalone ADB Manager AI App (MCP)
 
-A unified project for managing Android devices via ADB directly from Termux, with a built-in Model Context Protocol (MCP) server for AI integration.
+A modern, AI-first standalone MCP server for managing Android devices via ADB directly from Termux. This project is designed to be powered by AI agents, providing a seamless bridge between your LLM and your Android hardware.
 
 ## 🚀 Quick Start
 
-1. **Launch the CLI Manager:**
-   ```bash
-   ./adb-manager-launcher
-   ```
-   Or directly:
-   ```bash
-   ~/adb-manager/bin/adb-manager
-   ```
+### ⚡ One-Click Activation
+To activate ADB on your device instantly:
+```bash
+./adb-activate
+```
 
-2. **Start the MCP Server:**
-   ```bash
-   python3 ~/adb-manager/mcp/server.py
-   ```
+### 📱 Legacy TUI Manager
+For manual control and advanced features:
+```bash
+./adb-manager-launcher
+```
+
+### 🤖 Standalone MCP App
+To connect an AI agent:
+```bash
+./adb-manager/start-mcp.sh
+```
 
 ## 📂 Project Structure
 
-- `bin/`: The main `adb-manager` CLI tool.
+- `mcp/`: **Primary Entry Point.** Contains the MCP server and AI-specific instructions.
+- `bin/`: Core logic and the smart connection orchestrator.
 - `lib/`: `adb_core.sh` - Shared ADB logic and connection management.
-- `mcp/`: `server.py` - MCP server implementation.
-- `tests/`: Automated unit tests for core logic.
-- `ADB_USER_MANUAL.md`: Detailed usage guide and setup instructions.
+- `tests/`: Automated unit tests for core logic and server.
 
-## ✨ Features
+## ✨ AI-Powered Features
 
-- **Automated Connection:** Quick scanning and reconnection to Wireless Debugging.
-- **App Management:** List, install, uninstall, start, stop, and clear apps.
-- **Interactive Control:** Send text, key events, simulate taps/swipes.
-- **System Tools:** View logcat, top processes, device info, and more.
-- **File Transfer:** Push and pull files between Termux and device via MCP or CLI.
-- **AI Ready:** Built-in MCP server allows AI models (like Claude) to control your device.
+- **Agentic Setup:** AI models can automatically navigate Wireless Debugging setup, including "Virtual WiFi" and "Force Unlock" tricks.
+- **Health Check:** Real-time diagnosis of the ADB environment.
+- **Smart Orchestration:** Programmatic state management for multi-step tasks.
+- **App & System Control:** Deep integration for app management, screenshots, and shell commands.
 
 ## 🛠 Prerequisites
 
 - **Termux** installed on Android.
 - **ADB** installed (`pkg install android-tools`).
-- **Dialog** installed (`pkg install dialog`).
 - **Python 3** for the MCP server.
+
+## 🤖 For AI Agents
+See [AI Instructions](mcp/ai_instructions.md) for detailed tool usage and connection workflows.
 
 ## 🧪 Testing
 
