@@ -102,10 +102,11 @@ def call_tool(name, arguments):
         res = run_adb_command(["push", local_path, remote_path])
         return [{"type": "text", "text": f"STDOUT: {res.get('stdout')}\nSTDERR: {res.get('stderr')}"}]
 
-    elif name == "adb_keyevent":
-        keycode = arguments.get("keycode")
-        res = run_adb_command(["shell", "input", "keyevent", str(keycode)])
-        return [{"type": "text", "text": f"Sent keyevent {keycode}. STDOUT: {res.get('stdout')}"}]
+    elif name == "adb_pull":
+        remote_path = arguments.get("remote_path")
+        local_path = arguments.get("local_path", ".")
+        res = run_adb_command(["pull", remote_path, local_path])
+        return [{"type": "text", "text": f"STDOUT: {res.get('stdout')}\nSTDERR: {res.get('stderr')}"}]
 
     elif name == "adb_pair":
         target = arguments.get("target")
@@ -147,9 +148,14 @@ def call_tool(name, arguments):
     elif name == "adb_open_wireless_settings":
         res = subprocess.run(["bash", "-c", f"source {BASE_DIR}/lib/adb_core.sh && open_wireless_debug_settings"], capture_output=True, text=True)
         if res.returncode == 0:
-            return [{"type": "text", "text": "Successfully opened Wireless Debugging settings."}]
+            return [{"type": "text", "text": "Successfully opened Wireless Debugging settings. Please look for 'Pair device with pairing code' and provide the info."}]
         else:
             return [{"type": "text", "text": "Failed to open settings."}]
+
+    elif name == "adb_trigger_pairing_flow":
+        # Attempt to open settings and guide the user
+        res = subprocess.run(["bash", "-c", f"source {BASE_DIR}/lib/adb_core.sh && open_pairing_dialog"], capture_output=True, text=True)
+        return [{"type": "text", "text": "Wireless Debugging settings opened. \n\nTO COMPLETE PAIRING:\n1. Tap 'Pair device with pairing code'.\n2. Note the IP:Port and 6-digit Code.\n3. Send them to me (e.g., 'Pairing 192.168.1.10:45678 code 123456')."}]
 
     elif name == "adb_open_hotspot_settings":
         res = subprocess.run(["bash", "-c", f"source {BASE_DIR}/lib/adb_core.sh && open_hotspot_settings"], capture_output=True, text=True)
@@ -178,6 +184,68 @@ def call_tool(name, arguments):
             return [{"type": "text", "text": "WiFi/Hotspot is ACTIVE."}]
         else:
             return [{"type": "text", "text": "WiFi/Hotspot is INACTIVE."}]
+
+    elif name == "adb_smart_orchestrator":
+        mode = arguments.get("mode", "status")
+        arg1 = arguments.get("arg1", "")
+        arg2 = arguments.get("arg2", "")
+        cmd = [f"{BASE_DIR}/bin/smart-connect.sh", mode, arg1, arg2]
+        res = subprocess.run(cmd, capture_output=True, text=True)
+        return [{"type": "text", "text": f"STDOUT: {res.stdout}\nSTDERR: {res.stderr}"}]
+
+    elif name == "adb_get_potential_ips":
+        res = subprocess.run(["bash", "-c", f"source {BASE_DIR}/lib/adb_core.sh && get_wifi_ip"], capture_output=True, text=True)
+        ip = res.stdout.strip()
+        ips = [ip] if ip and ip != "localhost" else []
+        ips.append("127.0.0.1")
+        return [{"type": "text", "text": f"Potential IPs for pairing: {', '.join(ips)}"}]
+
+    elif name == "adb_health_check":
+        checks = []
+        # Check ADB
+        adb_check = subprocess.run(["command", "-v", "adb"], capture_output=True, text=True, shell=True)
+        checks.append(f"ADB Binary: {'OK (' + adb_check.stdout.strip() + ')' if adb_check.returncode == 0 else 'MISSING'}")
+        
+        # Check Devices
+        res = run_adb_command(["devices"])
+        devices_out = res.get("stdout", "").strip().splitlines()
+        connected = [d for d in devices_out[1:] if d.strip()]
+        checks.append(f"Connected Devices: {len(connected)}")
+        
+        # Check for offline devices
+        offline = [d for d in connected if "offline" in d]
+        if offline:
+            checks.append(f"⚠️  Warning: {len(offline)} device(s) are OFFLINE.")
+        
+        # Check WiFi
+        res = subprocess.run(["bash", "-c", f"source {BASE_DIR}/lib/adb_core.sh && get_wifi_ip"], capture_output=True, text=True)
+        ip = res.stdout.strip()
+        checks.append(f"Network IP: {ip or 'None (Offline)'}")
+        
+        return [{"type": "text", "text": "\n".join(checks)}]
+
+    elif name == "adb_doctor":
+        # Attempt to fix common ADB issues
+        results = []
+        
+        # 1. Clear everything
+        run_adb_command(["disconnect"])
+        results.append("Disconnected all devices.")
+        
+        # 2. Restart server
+        run_adb_command(["kill-server"])
+        run_adb_command(["start-server"])
+        results.append("Restarted ADB server.")
+        
+        # 3. Try to reconnect to last known
+        cmd = f"source {BASE_DIR}/lib/adb_core.sh && auto_connect"
+        res = subprocess.run(["bash", "-c", f"dialog() {{ return 0; }}; export -f dialog; {cmd}"], capture_output=True, text=True)
+        if res.returncode == 0:
+            results.append("Successfully reconnected to device.")
+        else:
+            results.append("Could not auto-reconnect. Manual pairing might be needed.")
+            
+        return [{"type": "text", "text": "\n".join(results)}]
 
     return [{"type": "text", "text": f"Unknown tool: {name}"}]
 
@@ -360,6 +428,11 @@ def main():
                                 "inputSchema": {"type": "object", "properties": {}}
                             },
                             {
+                                "name": "adb_trigger_pairing_flow",
+                                "description": "Open settings and provide instructions for Wireless Debugging pairing",
+                                "inputSchema": {"type": "object", "properties": {}}
+                            },
+                            {
                                 "name": "adb_open_hotspot_settings",
                                 "description": "Open Hotspot (Tethering) settings on the device to enable 'Virtual WiFi'",
                                 "inputSchema": {"type": "object", "properties": {}}
@@ -384,6 +457,38 @@ def main():
                             {
                                 "name": "adb_check_wifi_status",
                                 "description": "Check if WiFi or Hotspot is active (returns ACTIVE or INACTIVE)",
+                                "inputSchema": {"type": "object", "properties": {}}
+                            },
+                            {
+                                "name": "adb_smart_orchestrator",
+                                "description": "High-level orchestrator for the 'Smart Agent' setup flow.",
+                                "inputSchema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "mode": {
+                                            "type": "string", 
+                                            "enum": ["status", "prepare-hotspot", "prepare-wifi-direct", "open-wireless", "connect"],
+                                            "description": "The setup step to perform"
+                                        },
+                                        "arg1": {"type": "string", "description": "Optional: IP:Port for pairing"},
+                                        "arg2": {"type": "string", "description": "Optional: Pairing code"}
+                                    },
+                                    "required": ["mode"]
+                                }
+                            },
+                            {
+                                "name": "adb_health_check",
+                                "description": "Check the health and connectivity status of the ADB environment",
+                                "inputSchema": {"type": "object", "properties": {}}
+                            },
+                            {
+                                "name": "adb_doctor",
+                                "description": "Fix common ADB issues (offline devices, connection hangs)",
+                                "inputSchema": {"type": "object", "properties": {}}
+                            },
+                            {
+                                "name": "adb_get_potential_ips",
+                                "description": "Get potential IP addresses for the device (WiFi IP and localhost)",
                                 "inputSchema": {"type": "object", "properties": {}}
                             }
                         ]
