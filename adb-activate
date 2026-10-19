@@ -1,21 +1,36 @@
-#!/bin/bash
+#!/data/data/com.termux/files/usr/bin/bash
+# One-Click ADB Activation & Phantom Killer Unlocker (v2.0)
 
-# Simple entry point for one-click ADB activation
-BASE_DIR="$(cd "$(dirname "$(readlink -f "$0")")"/adb-manager && pwd)"
-BIN_DIR="$BASE_DIR/bin"
+SCRIPT_PATH="$(readlink -f "$0")"
+BASE_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
+if [ ! -f "$BASE_DIR/lib/adb_core.sh" ] && [ -f "$HOME/adb-manager-mcp/lib/adb_core.sh" ]; then
+    BASE_DIR="$HOME/adb-manager-mcp"
+fi
 LIB_PATH="$BASE_DIR/lib/adb_core.sh"
 
 if [ ! -f "$LIB_PATH" ]; then
-    echo "Error: ADB Manager core not found."
+    echo "Error: ADB Manager core not found at $LIB_PATH"
     exit 1
 fi
 
 source "$LIB_PATH"
 
-# Function to check if ADB is already working
 is_adb_active() {
-    adb devices | grep -qE "\tdevice$"
+    adb devices 2>/dev/null | grep -qE "\tdevice$"
 }
+
+if [ "${1:-}" = "--unlock-phantom" ]; then
+    if ! is_adb_active; then
+        auto_connect >/dev/null 2>&1 || true
+    fi
+    if is_adb_active; then
+        unlock_phantom_processes
+        exit $?
+    else
+        echo "Error: No active ADB device connected. Run ./adb-activate first."
+        exit 1
+    fi
+fi
 
 if is_adb_active; then
     echo "✅ ADB is already active and working!"
@@ -23,34 +38,31 @@ if is_adb_active; then
     exit 0
 fi
 
-echo "🚀 Starting One-Click ADB Activation..."
+echo "🚀 Starting One-Click ADB Activation (mDNS + AutoScan)..."
 
-# 1. Try last connection first
-if auto_connect > /dev/null 2>&1; then
+# 1. Try mDNS & last connection first
+if auto_connect >/dev/null 2>&1; then
     if is_adb_active; then
-        echo "✅ Reconnected to last device successfully!"
+        echo "✅ Connected to device ($(get_last_conn))!"
+        adb devices
         exit 0
     fi
 fi
 
 # 2. Try root if available
-if command -v su > /dev/null 2>&1; then
+if command -v su >/dev/null 2>&1; then
     echo "🔒 Root detected, attempting silent activation..."
-    if enable_adb_wireless_root 5555 > /dev/null 2>&1; then
+    if enable_adb_wireless_root 5555 >/dev/null 2>&1; then
         sleep 1
-        if adb connect localhost:5555 > /dev/null 2>&1; then
-            if is_adb_active; then
-                echo "✅ ADB activated via root!"
-                exit 0
-            fi
+        if adb connect localhost:5555 >/dev/null 2>&1 && is_adb_active; then
+            save_conn "localhost:5555"
+            echo "✅ ADB activated via root (localhost:5555)!"
+            exit 0
         fi
     fi
 fi
 
-# 3. If no active connection and no root, we need to guide the user
-echo "⚠️  Manual pairing required (No Root/Previous connection found)."
-echo "   I will now start the automated pairing flow."
-echo ""
-
-# Launch the TUI directly into the Full Automation flow
+# 3. Guide user if no active connection
+echo "⚠️  Manual pairing required (No active mDNS/Root connection found)."
+echo "   Starting automated pairing flow..."
 exec "$BASE_DIR/bin/adb-manager" --auto
