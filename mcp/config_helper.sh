@@ -1,31 +1,22 @@
-#!/bin/bash
+#!/data/data/com.termux/files/usr/bin/bash
+# Configuration Helper for ADB MCP Server v2.0 (QuickJS + Python Dual Engine)
 
-# Configuration Helper for ADB MCP Server
-# Generates configuration snippets for MCP clients
+SCRIPT_PATH="$(readlink -f "$0")"
+MCP_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
+LAUNCHER_PATH="$MCP_DIR/start-mcp.sh"
 
-SERVER_PATH="/data/data/com.termux/files/home/adb-manager/mcp/server.py"
-PYTHON_PATH=$(which python3)
-
-echo "### MCP Configuration Helper ###"
-echo "To connect the ADB MCP server to your client, use the following settings:"
+echo "### ADB Manager MCP v2.0 Configuration Helper ###"
+echo " Engine: Native QuickJS (qjs -m, 3MB RAM) with Python 3 fallback"
 echo ""
-
-echo "--- Claude Desktop (config.json) ---"
+echo "--- Google Antigravity CLI (agy) / Claude Code / Gemini CLI ---"
 cat <<EOF
 {
   "mcpServers": {
     "adb-manager": {
-      "command": "$PYTHON_PATH",
-      "args": ["$SERVER_PATH"]
+      "command": "$LAUNCHER_PATH",
+      "args": []
     }
   }
 }
 EOF
-
 echo ""
-echo "--- General Stdio Client ---"
-echo "Command: $PYTHON_PATH"
-echo "Arguments: $SERVER_PATH"
-echo ""
-
-echo "Note: Ensure that Termux is running and 'adb' is accessible in the environment where the server starts."
