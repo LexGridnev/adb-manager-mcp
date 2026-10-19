@@ -1,7 +1,6 @@
-#!/bin/bash
+#!/data/data/com.termux/files/usr/bin/bash
 
-# Main entry point for ADB Manager Unified Project
-# Source libraries
+# Main entry point for ADB Manager Unified Project (v2.0)
 LIB_PATH="$(dirname "$(readlink -f "$0")")/../lib/adb_core.sh"
 if [ -f "$LIB_PATH" ]; then
     source "$LIB_PATH"
@@ -10,7 +9,15 @@ else
     exit 1
 fi
 
-TEMP_FILE=$(mktemp)
+if [ "${1:-}" = "--auto" ]; then
+    full_auto_setup
+    exit $?
+elif [ "${1:-}" = "--unlock-phantom" ]; then
+    unlock_phantom_processes
+    exit $?
+fi
+
+TEMP_FILE=$(mktemp "${TMPDIR:-/data/data/com.termux/files/usr/tmp}/adb_mgr.XXXXXX")
 
 # --- Submenus ---
 
