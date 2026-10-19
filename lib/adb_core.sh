@@ -1,28 +1,60 @@
-#!/bin/bash
+#!/data/data/com.termux/files/usr/bin/bash
+# Core functions for ADB Manager v2.0 (Termux + ZeroG Compatible)
 
-# Core functions for ADB Manager
+LAST_CONN_FILE="${LAST_CONN_FILE:-$HOME/.adb_last_conn}"
 
-LAST_CONN_FILE="$HOME/.adb_last_conn"
+# Safe wrapper for dialog when running headless (e.g. inside MCP server)
+ui_dialog() {
+    if [ -t 1 ] && command -v dialog >/dev/null 2>&1; then
+        dialog "$@"
+    else
+        return 0
+    fi
+}
 
 # Open Hotspot/Tethering settings
 open_hotspot_settings() {
-    am start -a android.settings.TETHER_SETTINGS || am start -a android.settings.WIFI_TETHER_SETTINGS
+    am start -a android.settings.TETHER_SETTINGS >/dev/null 2>&1 || \
+    am start -a android.settings.WIFI_TETHER_SETTINGS >/dev/null 2>&1
 }
 
-# Open WiFi Direct settings (can sometimes unlock Wireless Debugging toggle)
+# Open WiFi Direct settings (can unlock Wireless Debugging toggle on HyperOS/MIUI)
 open_wifi_direct_settings() {
-    am start -n com.android.settings/.Settings\$WifiP2pSettingsActivity > /dev/null 2>&1 || am start -a android.net.wifi.p2p.SETTINGS > /dev/null 2>&1
+    am start -n com.android.settings/.Settings\$WifiP2pSettingsActivity >/dev/null 2>&1 || \
+    am start -a android.net.wifi.p2p.SETTINGS >/dev/null 2>&1
+}
+
+# Open Developer Options
+open_developer_options() {
+    am start -a android.settings.APPLICATION_DEVELOPMENT_SETTINGS >/dev/null 2>&1 || \
+    am start -n com.android.settings/.Settings\$DevelopmentSettingsDashboardActivity >/dev/null 2>&1
+}
+
+# Open Wireless Debugging settings
+open_wireless_debug_settings() {
+    am start -a android.settings.APPLICATION_DEVELOPMENT_SETTINGS >/dev/null 2>&1 || \
+    am start -n com.android.settings/.Settings\$DevelopmentSettingsDashboardActivity >/dev/null 2>&1 || \
+    am start -a android.settings.WIFI_IP_SETTINGS >/dev/null 2>&1
+}
+
+# Alias used by MCP trigger pairing flow
+open_pairing_dialog() {
+    open_wireless_debug_settings
 }
 
 # --- Connection Management ---
 
 # Get current WiFi IP
 get_wifi_ip() {
-    local ip=$(ifconfig wlan0 2>/dev/null | grep -oP '(?<=inet\s)\d+(\.\d+){3}')
-    [ -z "$ip" ] && ip=$(ifconfig wlan1 2>/dev/null | grep -oP '(?<=inet\s)\d+(\.\d+){3}')
-    [ -z "$ip" ] && ip=$(ifconfig p2p-wlan0-0 2>/dev/null | grep -oP '(?<=inet\s)\d+(\.\d+){3}')
-    # Try generic ifconfig if specific interfaces fail
-    [ -z "$ip" ] && ip=$(ifconfig | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | grep -v '127.0.0.1' | head -n 1)
+    local ip=""
+    if command -v ifconfig >/dev/null 2>&1; then
+        ip=$(ifconfig wlan0 2>/dev/null | grep -oE 'inet [0-9]+(\.[0-9]+){3}' | awk '{print $2}' | head -n 1)
+        [ -z "$ip" ] && ip=$(ifconfig wlan1 2>/dev/null | grep -oE 'inet [0-9]+(\.[0-9]+){3}' | awk '{print $2}' | head -n 1)
+        [ -z "$ip" ] && ip=$(ifconfig 2>/dev/null | grep -oE 'inet [0-9]+(\.[0-9]+){3}' | awk '{print $2}' | grep -v '127.0.0.1' | head -n 1)
+    fi
+    if [ -z "$ip" ] && command -v ip >/dev/null 2>&1; then
+        ip=$(ip -4 addr show wlan0 2>/dev/null | grep -oE 'inet [0-9]+(\.[0-9]+){3}' | awk '{print $2}' | head -n 1)
+    fi
     [ -z "$ip" ] && ip="localhost"
     echo "$ip"
 }
@@ -41,83 +73,101 @@ clear_last_conn() {
     rm -f "$LAST_CONN_FILE"
 }
 
+# Fast Android 11-15 Wireless Debugging discovery via ADB mDNS
+discover_adb_mdns_target() {
+    local target=""
+    target=$(adb mdns services 2>/dev/null | awk '/_adb-tls-connect\._tcp/{print $NF}' | head -n 1)
+    echo "$target"
+}
+
+# Discover pairing service target via ADB mDNS
+discover_adb_mdns_pairing() {
+    local target=""
+    target=$(adb mdns services 2>/dev/null | awk '/_adb-tls-pairing\._tcp/{print $NF}' | head -n 1)
+    echo "$target"
+}
+
 auto_connect() {
-    local last_conn=$(get_last_conn)
+    local last_conn
+    last_conn=$(get_last_conn)
     if [ -n "$last_conn" ]; then
-        dialog --infobox "Attempting to reconnect to $last_conn..." 5 50
+        ui_dialog --infobox "Attempting to reconnect to $last_conn..." 5 50
         RESULT=$(adb connect "$last_conn" 2>&1)
         if echo "$RESULT" | grep -qE "connected to|already connected"; then
             return 0
         fi
     fi
 
-    # Try 5555 first as it's the most common
-    if (timeout 0.5 adb connect "localhost:5555" | grep -qE "connected to|already connected") 2>/dev/null; then
+    # 1. Try mDNS auto-discovery (instant on Android 11-15 Wireless Debugging)
+    local mdns_target
+    mdns_target=$(discover_adb_mdns_target)
+    if [ -n "$mdns_target" ]; then
+        ui_dialog --infobox "Discovered Wireless ADB via mDNS: $mdns_target..." 4 50
+        if adb connect "$mdns_target" 2>&1 | grep -qE "connected to|already connected"; then
+            save_conn "$mdns_target"
+            return 0
+        fi
+    fi
+
+    # 2. Try localhost:5555 (classic TCP ADB)
+    if (timeout 1 adb connect "localhost:5555" 2>&1 | grep -qE "connected to|already connected") 2>/dev/null; then
         save_conn "localhost:5555"
         return 0
     fi
 
-    # Scan active ports using netstat/ss if available to be faster than brute force
+    # 3. Scan active local listening sockets via ss/netstat
     local active_ports=()
-    if command -v ss >/dev/null; then
-        active_ports=($(ss -tlnp | grep -oP '127.0.0.1:\K\d+' | sort -u))
-    elif command -v netstat >/dev/null; then
-        active_ports=($(netstat -tln | grep -oP '127.0.0.1:\K\d+' | sort -u))
+    if command -v ss >/dev/null 2>&1; then
+        active_ports=($(ss -tln 2>/dev/null | awk '{print $4}' | grep -oE '[0-9]+$' | awk '$1 >= 30000 && $1 <= 50000' | sort -u))
+    elif command -v netstat >/dev/null 2>&1; then
+        active_ports=($(netstat -tln 2>/dev/null | awk '{print $4}' | grep -oE '[0-9]+$' | awk '$1 >= 30000 && $1 <= 50000' | sort -u))
     fi
 
     for port in "${active_ports[@]}"; do
-        # Skip common non-ADB ports if known, but for now just try all active locals
-        dialog --infobox "Checking active local port $port..." 3 40
-        if (timeout 0.5 adb connect "localhost:$port" | grep -qE "connected to|already connected") 2>/dev/null; then
+        ui_dialog --infobox "Checking active local port $port..." 3 40
+        if (timeout 0.5 adb connect "localhost:$port" 2>&1 | grep -qE "connected to|already connected") 2>/dev/null; then
             save_conn "localhost:$port"
             return 0
         fi
     done
 
-    # Fallback to brute force scan if no active ports found or connection failed
-    local scan_ports=()
-    for p in {37000..44000..1000}; do
-        for i in {0..10}; do
-            scan_ports+=($((p + i)))
-        done
-    done
-    
-    for port in "${scan_ports[@]}"; do
-        dialog --infobox "Scanning localhost:$port..." 3 40
-        if (timeout 0.5 adb connect "localhost:$port" | grep -qE "connected to|already connected") 2>/dev/null; then
-            save_conn "localhost:$port"
-            return 0
-        fi
-    done
     return 1
+}
+
+# Unlock Android 12-15 Phantom Process Killer (32 child process ceiling) without Root via ADB shell
+unlock_phantom_processes() {
+    local out
+    out=$(adb shell "/system/bin/device_config set_sync_disabled_for_tests persistent && /system/bin/device_config put activity_manager max_phantom_processes 2147483647 && /system/bin/settings put global settings_enable_monitor_phantom_procs false && echo 'Phantom process limit unlocked: 2147483647'" 2>&1)
+    echo "$out"
+    echo "$out" | grep -q "2147483647"
 }
 
 # Full Automatic Wireless Debugging Setup
 full_auto_setup() {
-    local ip=$(get_wifi_ip)
-    
-    dialog --infobox "Starting Automatic Setup...\nStep 1: Checking for existing connections." 5 60
+    ui_dialog --infobox "Starting Automatic Setup...\nStep 1: Checking for existing/mDNS connections." 5 60
     if auto_connect; then
         return 0
     fi
 
     # Step 2: Try root method if available
-    dialog --infobox "Step 2: Checking for root access to enable Wireless ADB." 5 60
-    if command -v su >/dev/null; then
+    ui_dialog --infobox "Step 2: Checking for root access to enable Wireless ADB." 5 60
+    if command -v su >/dev/null 2>&1; then
         if enable_adb_wireless_root 5555; then
             sleep 1
-            if adb connect "localhost:5555" | grep -qE "connected to|already connected"; then
+            if adb connect "localhost:5555" 2>&1 | grep -qE "connected to|already connected"; then
                 save_conn "localhost:5555"
                 return 0
             fi
         fi
     fi
 
-    # Step 3: Guide user through Pairing if above failed
-    dialog --title "Pairing Required" --yesno "Could not automatically connect.\n\nDo you want to use the 'Connect to Self' hack to get ADB access without root?\n(Android 11+ Wireless Debugging)" 10 60
-    if [ $? -eq 0 ]; then
-        setup_self_connection
-        return $?
+    # Step 3: Guide user through Pairing if interactive
+    if [ -t 1 ] && command -v dialog >/dev/null 2>&1; then
+        dialog --title "Pairing Required" --yesno "Could not automatically connect.\n\nDo you want to use the 'Connect to Self' hack to get ADB access without root?\n(Android 11+ Wireless Debugging)" 10 60
+        if [ $? -eq 0 ]; then
+            setup_self_connection
+            return $?
+        fi
     fi
 
     return 1
@@ -125,42 +175,46 @@ full_auto_setup() {
 
 # Specific flow for connecting device to itself via Wireless Debugging
 setup_self_connection() {
-    local ip=$(get_wifi_ip)
-    
+    local ip
+    ip=$(get_wifi_ip)
     open_wireless_debug_settings
-    
+
     dialog --title "Wireless Debugging Hack" --msgbox "Follow these steps strictly:\n\n1. Enable 'Wireless debugging'.\n2. Tap 'Pair device with pairing code'.\n3. Note the IP:Port and 6-digit code.\n4. Come back here." 12 60
-    
-    local pair_info=$(dialog --title "Step 1: Pairing" --inputbox "Enter Pairing IP:Port (e.g., $ip:42351):" 8 60 "$ip:" 2>&1 >/dev/tty)
+
+    local default_pair="$ip:"
+    local mdns_pair
+    mdns_pair=$(discover_adb_mdns_pairing)
+    [ -n "$mdns_pair" ] && default_pair="$mdns_pair"
+
+    local pair_info
+    pair_info=$(dialog --title "Step 1: Pairing" --inputbox "Enter Pairing IP:Port (e.g., $ip:42351):" 8 60 "$default_pair" 2>&1 >/dev/tty)
     [ -z "$pair_info" ] && return 1
-    
-    local pair_code=$(dialog --title "Step 2: Pairing Code" --inputbox "Enter the 6-digit pairing code:" 8 60 2>&1 >/dev/tty)
+
+    local pair_code
+    pair_code=$(dialog --title "Step 2: Pairing Code" --inputbox "Enter the 6-digit pairing code:" 8 60 2>&1 >/dev/tty)
     [ -z "$pair_code" ] && return 1
-    
+
     dialog --infobox "Pairing..." 3 30
-    local pair_res=$(adb pair "$pair_info" "$pair_code" 2>&1)
-    
+    local pair_res
+    pair_res=$(adb pair "$pair_info" "$pair_code" 2>&1)
+
     if echo "$pair_res" | grep -q "Successfully paired"; then
-        dialog --title "Success" --msgbox "Paired! Now find the 'IP address & Port' on the main 'Wireless debugging' screen (NOT the pairing one)." 10 60
-        
-        local connect_port=$(dialog --title "Step 3: Connection" --inputbox "Enter the PORT only (from 'IP address & Port'):" 8 40 "" 2>&1 >/dev/tty)
-        
+        sleep 1
+        if auto_connect; then
+            dialog --title "Hack Successful" --msgbox "Connected to self via mDNS/AutoScan!\nYou now have 'shell' user privileges via ADB." 8 50
+            return 0
+        fi
+
+        local connect_port
+        connect_port=$(dialog --title "Step 3: Connection" --inputbox "Enter the PORT only (from main 'Wireless debugging' screen):" 8 50 "" 2>&1 >/dev/tty)
         if [ -n "$connect_port" ]; then
             local target="localhost:$connect_port"
             dialog --infobox "Connecting to $target..." 3 40
-            if adb connect "$target" | grep -qE "connected to|already connected"; then
+            if adb connect "$target" 2>&1 | grep -qE "connected to|already connected"; then
                 save_conn "$target"
                 dialog --title "Hack Successful" --msgbox "Connected to self!\nYou now have 'shell' user privileges via ADB." 8 50
                 return 0
             fi
-        fi
-        
-        # If manual port failed, try auto-scanning the IP used for pairing
-        local target_ip=$(echo "$pair_info" | cut -d ':' -f 1)
-        dialog --infobox "Manual port failed or skipped. Scanning $target_ip for active ADB ports..." 5 60
-        if auto_connect_to_ip "$target_ip"; then
-            dialog --title "Hack Successful" --msgbox "Connected to self after scanning!\nYou now have 'shell' user privileges via ADB." 8 50
-            return 0
         fi
     else
         dialog --title "Pairing Failed" --msgbox "Error: $pair_res" 10 60
@@ -170,55 +224,46 @@ setup_self_connection() {
 
 auto_connect_to_ip() {
     local target_ip="${1:-localhost}"
-    
-    # Try 5555
-    if (timeout 1 adb connect "$target_ip:5555" | grep -qE "connected to|already connected") 2>/dev/null; then
+
+    local mdns_target
+    mdns_target=$(discover_adb_mdns_target)
+    if [ -n "$mdns_target" ]; then
+        if (timeout 1 adb connect "$mdns_target" 2>&1 | grep -qE "connected to|already connected") 2>/dev/null; then
+            save_conn "$mdns_target"
+            return 0
+        fi
+    fi
+
+    if (timeout 1 adb connect "$target_ip:5555" 2>&1 | grep -qE "connected to|already connected") 2>/dev/null; then
         save_conn "$target_ip:5555"
         return 0
     fi
 
-    # Scan ports
-    local scan_ports=()
-    for p in {37000..44000..1000}; do
-        for i in {0..10}; do
-            scan_ports+=($((p + i)))
-        done
-    done
-    
-    for port in "${scan_ports[@]}"; do
-        dialog --infobox "Scanning $target_ip:$port..." 3 40
-        if (timeout 0.5 adb connect "$target_ip:$port" | grep -qE "connected to|already connected") 2>/dev/null; then
-            save_conn "$target_ip:$port"
-            return 0
-        fi
-    done
     return 1
 }
 
 # Automated Pairing and Connection for non-interactive use
-# $1: pair_info (IP:Port), $2: pair_code
 pair_and_connect() {
     local pair_info="$1"
     local pair_code="$2"
-    
+
     if [ -z "$pair_info" ] || [ -z "$pair_code" ]; then
         echo "Error: Missing pairing info or code."
         return 1
     fi
 
     echo "Pairing with $pair_info..."
-    local pair_res=$(adb pair "$pair_info" "$pair_code" 2>&1)
+    local pair_res
+    pair_res=$(adb pair "$pair_info" "$pair_code" 2>&1)
     echo "$pair_res"
 
     if echo "$pair_res" | grep -q "Successfully paired"; then
-        local target_ip=$(echo "$pair_info" | cut -d ':' -f 1)
-        echo "Pairing successful. Scanning $target_ip for connection port..."
-        
-        # Give ADB a moment to register the pairing
+        local target_ip
+        target_ip=$(echo "$pair_info" | cut -d ':' -f 1)
+        echo "Pairing successful. Discovering connection port..."
         sleep 2
-        
-        if auto_connect_to_ip "$target_ip"; then
-            echo "Successfully connected to $target_ip"
+        if auto_connect || auto_connect_to_ip "$target_ip"; then
+            echo "Successfully connected to $(get_last_conn)"
             return 0
         else
             echo "Failed to find connection port automatically."
@@ -232,43 +277,47 @@ pair_and_connect() {
 # --- Package Management ---
 
 get_package_list() {
-    adb shell pm list packages | cut -d ':' -f 2
+    adb shell pm list packages | cut -d ':' -f 2 | tr -d '\r'
 }
 
 select_package() {
     local title="$1"
     local menu_text="$2"
-    local packages_temp=$(mktemp)
-    
+    local packages_temp
+    packages_temp=$(mktemp "${TMPDIR:-/data/data/com.termux/files/usr/tmp}/adb_pkgs.XXXXXX")
+
     get_package_list > "$packages_temp"
-    
+
     if [ -s "$packages_temp" ]; then
         local MENU_LIST=()
         while IFS= read -r line; do
             MENU_LIST+=("$line" "")
         done < "$packages_temp"
-        
-        local selected=$(dialog --title "$title" --menu "$menu_text" 20 60 12 "${MENU_LIST[@]}" 2>&1 >/dev/tty)
+
+        local selected
+        selected=$(dialog --title "$title" --menu "$menu_text" 20 60 12 "${MENU_LIST[@]}" 2>&1 >/dev/tty)
         echo "$selected"
     else
         echo ""
     fi
-    rm "$packages_temp"
+    rm -f "$packages_temp"
 }
 
 # --- Device Info ---
 
 get_device_info() {
-    local model=$(adb shell getprop ro.product.model)
-    local version=$(adb shell getprop ro.build.version.release)
-    local battery=$(adb shell dumpsys battery | grep level | cut -d ':' -f 2 | tr -d ' ')
+    local model version battery
+    model=$(adb shell getprop ro.product.model | tr -d '\r')
+    version=$(adb shell getprop ro.build.version.release | tr -d '\r')
+    battery=$(adb shell dumpsys battery | grep level | cut -d ':' -f 2 | tr -d ' \r')
     echo -e "Model: $model\nAndroid Version: $version\nBattery Level: $battery%"
 }
 
 # --- Helper Utilities ---
 
 check_wifi_active() {
-    local ip=$(get_wifi_ip)
+    local ip
+    ip=$(get_wifi_ip)
     if [ "$ip" != "localhost" ] && [ -n "$ip" ]; then
         return 0
     else
@@ -277,12 +326,13 @@ check_wifi_active() {
 }
 
 automate_virtual_wifi_setup() {
-    local choice=$(dialog --title "Virtual WiFi Automation" --menu "Choose a trick to unlock Wireless Debugging:" 12 60 2 \
+    local choice
+    choice=$(dialog --title "Virtual WiFi Automation" --menu "Choose a trick to unlock Wireless Debugging:" 12 60 2 \
         1 "Hotspot Method (Standard)" \
         2 "WiFi Direct Method (Force Unlock Trick)" 2>&1 >/dev/tty)
-    
+
     [ -z "$choice" ] && return 1
-    
+
     case "$choice" in
         1)
             dialog --title "Hotspot Method" --infobox "Checking WiFi/Hotspot status..." 3 40
@@ -307,21 +357,13 @@ automate_virtual_wifi_setup() {
             [ $? -ne 0 ] && return 1
             ;;
     esac
-    
-    # Once the trick is applied, jump to Wireless Debugging
-    open_wireless_debug_settings
-}
 
-open_wireless_debug_settings() {
-    am start -a android.settings.WIFI_IP_SETTINGS > /dev/null 2>&1
-    am start -n com.android.settings/.Settings\$DevelopmentSettingsDashboardActivity > /dev/null 2>&1
-    # On some devices, development settings is a sub-activity
-    am start -a android.settings.APPLICATION_DEVELOPMENT_SETTINGS > /dev/null 2>&1
+    open_wireless_debug_settings
 }
 
 enable_adb_wireless_root() {
     local port="${1:-5555}"
-    if command -v su >/dev/null; then
+    if command -v su >/dev/null 2>&1; then
         su -c "setprop service.adb.tcp.port $port && stop adbd && start adbd"
         return $?
     else
