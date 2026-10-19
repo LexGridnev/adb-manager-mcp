@@ -3,6 +3,8 @@ import sys
 import subprocess
 import os
 import time
+import shlex
+import shutil
 
 # Base directory for adb-manager
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -172,9 +174,9 @@ def call_tool(name, arguments):
             return [{"type": "text", "text": "Failed to open settings."}]
 
     elif name == "adb_pair_and_connect":
-        target = arguments.get("target")
-        code = arguments.get("code")
-        cmd = f"source {BASE_DIR}/lib/adb_core.sh && pair_and_connect {target} {code}"
+        target = shlex.quote(str(arguments.get("target", "")))
+        code = shlex.quote(str(arguments.get("code", "")))
+        cmd = f"source {shlex.quote(BASE_DIR + '/lib/adb_core.sh')} && pair_and_connect {target} {code}"
         res = subprocess.run(["bash", "-c", f"dialog() {{ return 0; }}; export -f dialog; {cmd}"], capture_output=True, text=True)
         return [{"type": "text", "text": f"STDOUT: {res.stdout}\nSTDERR: {res.stderr}"}]
 
@@ -202,42 +204,39 @@ def call_tool(name, arguments):
 
     elif name == "adb_health_check":
         checks = []
-        # Check ADB
-        adb_check = subprocess.run(["command", "-v", "adb"], capture_output=True, text=True, shell=True)
-        checks.append(f"ADB Binary: {'OK (' + adb_check.stdout.strip() + ')' if adb_check.returncode == 0 else 'MISSING'}")
+        adb_bin = shutil.which("adb")
+        checks.append(f"ADB Binary: {'OK (' + adb_bin + ')' if adb_bin else 'MISSING'}")
         
-        # Check Devices
         res = run_adb_command(["devices"])
         devices_out = res.get("stdout", "").strip().splitlines()
         connected = [d for d in devices_out[1:] if d.strip()]
         checks.append(f"Connected Devices: {len(connected)}")
         
-        # Check for offline devices
         offline = [d for d in connected if "offline" in d]
         if offline:
             checks.append(f"⚠️  Warning: {len(offline)} device(s) are OFFLINE.")
         
-        # Check WiFi
         res = subprocess.run(["bash", "-c", f"source {BASE_DIR}/lib/adb_core.sh && get_wifi_ip"], capture_output=True, text=True)
         ip = res.stdout.strip()
         checks.append(f"Network IP: {ip or 'None (Offline)'}")
         
         return [{"type": "text", "text": "\n".join(checks)}]
 
+    elif name == "adb_mdns_discover":
+        res = run_adb_command(["mdns", "services"])
+        return [{"type": "text", "text": res.get("stdout", "").strip() or "No mDNS ADB services broadcast."}]
+
+    elif name == "adb_unlock_phantom_limit":
+        res = subprocess.run(["bash", "-c", f"source {shlex.quote(BASE_DIR + '/lib/adb_core.sh')} && unlock_phantom_processes"], capture_output=True, text=True)
+        return [{"type": "text", "text": res.stdout.strip() or res.stderr.strip()}]
+
     elif name == "adb_doctor":
-        # Attempt to fix common ADB issues
         results = []
-        
-        # 1. Clear everything
         run_adb_command(["disconnect"])
         results.append("Disconnected all devices.")
-        
-        # 2. Restart server
         run_adb_command(["kill-server"])
         run_adb_command(["start-server"])
         results.append("Restarted ADB server.")
-        
-        # 3. Try to reconnect to last known
         cmd = f"source {BASE_DIR}/lib/adb_core.sh && auto_connect"
         res = subprocess.run(["bash", "-c", f"dialog() {{ return 0; }}; export -f dialog; {cmd}"], capture_output=True, text=True)
         if res.returncode == 0:
